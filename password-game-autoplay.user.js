@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Password Game Autoplay
 // @namespace    https://github.com/chemix444/passwordgameautoplay
-// @version      1.1.0
+// @version      1.1.1
 // @description  Unattended auto-solver for neal.fun's The Password Game — rule 1 through the win screen.
 // @author       chemix444
 // @match        https://neal.fun/password-game/*
@@ -140,8 +140,14 @@
 
   const SPONSORS = ['pepsi', 'starbucks', 'shell', 'Pepsi', 'Starbucks', 'Shell'];
 
-  const AFFIRMATIONS = ['i am loved', 'i am worthy', 'i am enough',
-    'I am loved', 'I am worthy', 'I am enough'];
+  // The game matches the affirmations with spaces stripped ("iamloved"), and
+  // contenteditable editors can turn typed spaces into non-breaking spaces
+  // anyway — so the spaceless forms go first. Capitalized forms last: their
+  // capital I counts as iodine (53) and inflates the element balance while a
+  // probe batch is in the password.
+  const AFFIRMATIONS = ['iamloved', 'iamworthy', 'iamenough',
+    'i am loved', 'i am worthy', 'i am enough',
+    'Iamloved', 'I am loved', 'I am worthy', 'I am enough'];
 
   const ADJACENT_PAIRS = ['hi', 'no', 'op', 'st', 'de', 'ab', 'lm', 'rs', 'tu', 'gh'];
 
@@ -345,11 +351,15 @@
    * (bold/italic/font) survives because it's real markup in that HTML.
    * ------------------------------------------------------------------ */
   function allEditors() {
-    let eds = [...document.querySelectorAll('.password-box .ProseMirror, .ProseMirror')].filter(isVisible);
+    const pm = [...document.querySelectorAll('.password-box .ProseMirror, .ProseMirror')];
+    let eds = pm.filter(isVisible);
     if (!eds.length) {
-      const inp = [...document.querySelectorAll('.password-box input, .password-box textarea, [contenteditable="true"]')].filter(isVisible);
-      eds = inp;
+      eds = [...document.querySelectorAll('.password-box input, .password-box textarea, [contenteditable="true"]')].filter(isVisible);
     }
+    // The visibility filter only exists to pick the right box; if it rejects
+    // everything (headless quirks, mid-layout reads), writing into a
+    // "hidden" editor still beats stalling forever.
+    if (!eds.length && pm.length) eds = pm;
     return eds;
   }
 
@@ -383,13 +393,17 @@
     ed.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: plain }));
   }
 
-  function commitToEditor(html, plain) {
+  function commitToEditor(html, plain, force) {
     const eds = allEditors();
     if (!eds.length) return false;
     try {
       for (const ed of eds) {
         const cur = (ed.tagName === 'INPUT' || ed.tagName === 'TEXTAREA') ? ed.value : ed.textContent;
-        if (cur !== plain) writeEditor(ed, html, plain);
+        // The text comparison alone is NOT enough to skip a write: a change of
+        // formatting marks (e.g. the bold-vowels flag flipping on) alters the
+        // HTML but not the text, and skipping would record the new HTML as
+        // committed while the DOM never received it — a permanent stall.
+        if (force || cur !== plain) writeEditor(ed, html, plain);
       }
       return true;
     } catch (e) {
@@ -405,10 +419,12 @@
     const allMatch = allEditors().every((ed) =>
       ((ed.tagName === 'INPUT' || ed.tagName === 'TEXTAREA') ? ed.value : ed.textContent) === plain);
     if (html === ST.lastCommittedHTML && allMatch) return;
-    if (commitToEditor(html, plain)) {
+    if (commitToEditor(html, plain, html !== ST.lastCommittedHTML)) {
       ST.lastCommittedHTML = html;
       ST.lastCommitTick = ST.tick;
       ST.modelPlain = plain;
+    } else if (!ST.lastError) {
+      ST.lastError = 'commit: no editor found to write into';
     }
   }
 
@@ -495,7 +511,14 @@
         } else if (rule.passed) this.failStreak = 0;
         return;
       }
-      if (this.exhausted) return;
+      if (this.exhausted) {
+        // Exhaustion isn't final: the rule may pass via other content, or a
+        // transient editor/commit glitch may have poisoned the whole pass —
+        // retry from scratch after a cooldown.
+        if (rule.passed) { this.exhausted = false; this.lock(''); return; }
+        if (ST.tick - this.exhaustedAt > 120) this.reset();
+        return;
+      }
       if (!domSettled()) return;
 
       if (this.pendingSince == null) {
@@ -519,6 +542,7 @@
       this.cur = set;
       if (!set) {
         this.exhausted = true;
+        this.exhaustedAt = ST.tick;
         this.pendingSince = null;
         segSet(this.segId, '');
         return;
@@ -961,8 +985,12 @@
     const fixed = scanElements(plainExcept(['elements']));
     const rem = F.elementTarget - fixed;
     const combo = composeElements(rem, F.needTwoLetterElement);
-    if (combo) segSet('elements', combo.join(''));
-    else {
+    if (combo) {
+      segSet('elements', combo.join(''));
+      // overshoot is usually transient (a probe batch with capital I = iodine
+      // sitting in the password); drop the stale error once we recover
+      if (/^elements:/.test(ST.lastError)) ST.lastError = '';
+    } else {
       segSet('elements', '');
       if (rem !== 0) ST.lastError = `elements: cannot reach ${F.elementTarget} (fixed=${fixed})`;
     }
@@ -1277,6 +1305,12 @@
           }
 
           recomputeDerived();
+          // Watchdog: whatever else goes wrong (stale comparisons, a silently
+          // rejected write), a failing rule with a quiet editor for >10s means
+          // our view of the DOM can't be trusted — force a full rewrite.
+          if (ST.rules.some((r) => !r.passed) && ST.tick - ST.lastCommitTick > 40) {
+            ST.lastCommittedHTML = null;
+          }
           commitIfNeeded();
           maybeCheckpoint();
           maybeRollback();
@@ -1330,7 +1364,7 @@
     tick();
     setInterval(feederTick, 1000);
     setInterval(safetyTick, 800);
-    window.PGAP = { state: ST, segs, segSet, stop: () => { ST.running = false; }, start: () => { ST.running = true; } };
+    window.PGAP = { state: ST, segs, segSet, renderRich, allEditors, stop: () => { ST.running = false; }, start: () => { ST.running = true; } };
   }
 
   boot();

@@ -54,7 +54,7 @@ const MOCK = 'file://' + path.resolve(__dirname, 'mock-game.html');
 
   // Let it solve.
   let final = null;
-  for (let i = 0; i < 90; i++) {
+  for (let i = 0; i < 240; i++) {
     await page.waitForTimeout(500);
     final = await page.evaluate(() => ({ won: window.__STATE__.won, unlocked: window.__STATE__.unlocked }));
     if (final.won) break;
