@@ -74,7 +74,9 @@
   const graphemes = (s) => SEG ? Array.from(SEG.segment(s), (x) => x.segment) : Array.from(s);
   const glen = (s) => graphemes(s).length;
   const digitSum = (s) => (s.match(/[0-9]/g) || []).reduce((a, c) => a + (+c), 0);
-  const isVowel = (g) => /^[aeiouAEIOU]$/.test(g);
+  // The game counts y as a vowel for the bold-vowels rule ("a, e, i, o, u,
+  // and sometimes y") — leaving y unbolded fails rule 19.
+  const isVowel = (g) => /^[aeiouyAEIOUY]$/.test(g);
   const isAsciiNonVowel = (g) => /^[\x21-\x7e]$/.test(g) && !isVowel(g);
   const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const chunk = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
@@ -927,7 +929,7 @@
   function updateLengthAndFiller() {
     const F = ST.flags;
     const plainNoFiller = () => renderPlain({ filler: '' });
-    const vowels = (renderPlain().match(/[aeiouAEIOU]/g) || []).length;
+    const vowels = (renderPlain().match(/[aeiouyAEIOUY]/g) || []).length;
     const asciiAvail = graphemes(renderPlain({ filler: '' })).filter(isAsciiNonVowel).length;
     const minFiller = Math.max(CONFIG.MIN_FILLER, F.italic ? Math.max(0, vowels - asciiAvail) + CONFIG.MIN_FILLER : CONFIG.MIN_FILLER);
 
