@@ -1,0 +1,14 @@
+{
+  "name": "passwordgameautoplay",
+  "version": "1.0.0",
+  "description": "Tampermonkey userscript that auto-completes neal.fun's The Password Game.",
+  "private": true,
+  "scripts": {
+    "check": "node --check password-game-autoplay.user.js",
+    "test": "node test/run.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.40.0"
+  },
+  "license": "MIT"
+}
