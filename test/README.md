@@ -25,7 +25,7 @@ node test/run.js /path/to/chromium
 Expected output:
 
 ```
-PASS — solved all 18 rules with no false win.
+PASS — solved all 19 rules with no false win.
 ```
 
 ## What it covers
@@ -34,13 +34,16 @@ Editor commit mechanism, dynamic rule detection, month/country/adjacent probing
 with binary-search narrowing and locking, the all-moon-phases trick, captcha
 refresh, the digit-sum and atomic-number balancers (including accounting for the
 stray `V` in `XXXV`), bold-vowels rendering (y counts as a vowel, checked via
-real `<b>` ancestry in the editor DOM), prime-length filler, the two-box final
-retype, and the visibility-gated win/death watchers.
+real `<b>` ancestry in the editor DOM), the YouTube exact-duration machine
+(rule-text parsing, duration-map fetch with element-padding stripping, rejection
+of roman-lettered ids, URL probing — network sources served canned by the GM
+stub), prime-length filler, the two-box final retype, and the visibility-gated
+win/death watchers.
 
 ## What it does NOT cover
 
-The live-only rules — Wordle (game API), YouTube exact-duration (search APIs),
-chess (site bundle extraction) — and the Paul/fire and font-formatting rules.
-Those depend on the real site (Cloudflare blocks non-interactive access) and are
-best-effort against the current DOM, with the HUD's per-rule manual override as
-the fallback.
+The live-only rules — Wordle (game API), chess (site bundle extraction), the
+real YouTube/Greasy Fork endpoints — and the Paul/fire and font-formatting
+rules. Those depend on the real site (Cloudflare blocks non-interactive access)
+and are best-effort against the current DOM, with the HUD's per-rule manual
+override as the fallback.

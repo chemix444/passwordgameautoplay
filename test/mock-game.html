@@ -57,6 +57,12 @@
     return sawVowel;
   }
   const COUNTRIES=/afghanistan|australia|belgium|brazil|canada|china|denmark|egypt|france|germany|india|japan|kenya|mexico|norway|peru|qatar|russia|spain|turkey|ukraine|vietnam|yemen|zambia/i;
+  // Stand-in for the game's YouTube duration check: only this id is 4:12 long.
+  const YT_DURATIONS = { wivuhAAxlec: 252 };
+  function ytOk(){
+    const m = pw().match(/(?:youtu\.be\/|youtube\.com\/watch\?v=)([\w-]{11})/);
+    return !!m && YT_DURATIONS[m[1]] === 252;
+  }
 
   // Captcha state: a code embedded in an image filename, refreshable.
   let captchaCode = 'a1b2c3'; // starts digit-heavy so the solver must refresh
@@ -80,6 +86,7 @@
     { desc: 'Your password must include a leap year.', test: () => hasLeap(pw()) },
     { desc: 'The elements in your password must have atomic numbers that add up to 200.', test: () => atomicSum(pw()) === 200 },
     { desc: 'All the vowels in your password must be bolded.', test: () => vowelsBolded() },
+    { desc: 'Your password must include the URL of a 4 minute 12 second long YouTube video.', test: () => ytOk() },
     { desc: 'Your password must include the name of this country: France.', test: () => COUNTRIES.test(pw()) },
     { desc: 'The length of your password must be a prime number.', test: () => isPrime(pw().length) },
     { desc: 'Your password is not strong enough.', test: () => pw().replace(/\s/g,'').length >= 20 },

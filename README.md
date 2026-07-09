@@ -101,7 +101,7 @@ the HUD's per-rule manual override. See [Troubleshooting](#troubleshooting).
 | Bold vowels / 2× italic / Wingdings % / Times New Roman / 50px digits / per-letter sizes | All expressed as per-grapheme marks in the rendered HTML. The game counts **y as a vowel** ("a, e, i, o, u, and sometimes y"), so y/Y are bolded too. Italic extras are ASCII-only so the 2:1 ratio holds under any character-counting scheme; Wingdings gets a margin above the required percentage. |
 | Sacrifice | Picks two letters absent from the current password, preferring `j q z w …` and never `a–f` (reserved for the hex color); clicks the tiles and confirm button, then bans those letters from every future candidate pool. |
 | Hex color | Swatch read from the rule's inline background style; refreshed until the hex is digit-cheap. |
-| YouTube exact duration | Searches "N minute M second timer"-style queries through public Piped/Invidious instances (they expose durations in seconds, no key needed), optionally the YouTube Data API v3 if you set `CONFIG.YT_API_KEY`, plus a local `YT_FALLBACK_POOL` you can extend. Candidates are filtered for Roman letters/banned letters/digit cost and probed with a 9s async-validation window each. |
+| YouTube exact duration | The duration is randomized per run (3:00–36:20). Sources, in order: your local `YT_FALLBACK_POOL`; a community-curated duration→video map (from Mabi19's password-game-tas, fetched at runtime from where the author published it — its durations match what the game's own API reports); scraping youtube.com search results directly via `GM_xmlhttpRequest` (no API key; parses `videoRenderer` blocks for exact displayed lengths, ±1s tolerated for display-vs-API rounding); the Data API v3 if you set `CONFIG.YT_API_KEY`; dead-ish Piped instances as a last resort. Candidates are filtered for Roman letters (lone `I` runs are allowed — they multiply the roman product by 1), banned letters, and digit cost, then probed with a 9s async-validation window each. |
 | Password length + prime | The game's own displayed length counter is used to calibrate emoji-counting differences; the solver then searches for the smallest prime target consistent with its own digits appearing in the password, padding with `-` filler. |
 | Final retype | Clicks through the confirmation and lets the normal commit loop repopulate the emptied box. |
 
@@ -135,10 +135,12 @@ const YT_FALLBACK_POOL = {
   `.ProseMirror` element's `innerHTML`. If the site restructured its editor,
   check that `findEditor()` still resolves the right node; the HUD's last-error
   line reports commit failures.
-- **YouTube rule stuck:** public Piped/Invidious instances rotate and die.
-  Add working instances to the lists in `searchYoutube()`, set a Data API key,
-  extend `YT_FALLBACK_POOL`, or click the rule in the HUD and paste a known
-  URL manually.
+- **YouTube rule stuck:** the primary sources are the community duration map
+  (Greasy Fork) and direct youtube.com search scraping — if both fail, check
+  the HUD's error line for which one broke. You can set a Data API key, extend
+  `YT_FALLBACK_POOL`, or click the rule in the HUD and paste a known URL
+  manually. Note some map entries are old; a deleted video just costs one
+  9-second probe before the next candidate is tried.
 - **Chess rule stuck:** the solutions array wasn't found in the site bundle
   (minifier output changed). Click the rule in the HUD and type the move
   (e.g. `Qh7#`) — everything else continues unattended.
