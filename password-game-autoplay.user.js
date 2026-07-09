@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Password Game Autoplay
 // @namespace    https://github.com/chemix444/passwordgameautoplay
-// @version      1.1.1
+// @version      1.2.0
 // @description  Unattended auto-solver for neal.fun's The Password Game — rule 1 through the win screen.
 // @author       chemix444
 // @match        https://neal.fun/password-game/*
@@ -316,11 +316,13 @@
     for (let i = 0; i < total; i++) {
       const { g } = cells[i];
       let inner = esc(g);
-      if (F.boldVowels && isVowel(g)) inner = '<b>' + inner + '</b>';
-      if (italicSet.has(i)) inner = '<i>' + inner + '</i>';
+      // <strong>/<em> and the quoted 'Times New Roman' below mirror the exact
+      // markup the game's editor is known to accept — don't "simplify" them.
+      if (F.boldVowels && isVowel(g)) inner = '<strong>' + inner + '</strong>';
+      if (italicSet.has(i)) inner = '<em>' + inner + '</em>';
 
       let font = null;
-      if (F.tnrRomans && /^[IVXLCDM]$/.test(g)) font = 'Times New Roman';
+      if (F.tnrRomans && /^[IVXLCDM]$/.test(g)) font = "'Times New Roman'";
       else if (wingSet.has(i)) font = 'Wingdings';
 
       let size = null;
@@ -332,7 +334,8 @@
       }
 
       if (font || size != null) {
-        const style = (font ? `font-family:${font};` : '') + (size != null ? `font-size:${size}px;` : '');
+        const style = [font && `font-family: ${font}`, size != null && `font-size: ${size}px`]
+          .filter(Boolean).join('; ');
         inner = `<span style="${style}">${inner}</span>`;
       }
       html += inner;
@@ -1074,6 +1077,10 @@
     { key: 'feed', rx: /don'?t forget to feed|feed him|has hatched/, onSeen: () => { ST.flags.hatched = true; segSet('egg', '🐔'); segSet('food', '🐛'.repeat(CONFIG.FOOD_TARGET)); } },
     { key: 'egg', rx: /chicken|🥚|keep him safe/, onSeen: () => { if (!ST.flags.hatched) segSet('egg', '🥚'); } },
     { key: 'fire', rx: /on fire|put it out/, onFail: () => { ST.flags.fireFailing = true; } },
+    // 'tnr' must be matched before the generic roman handlers: rule 29 ("All
+    // roman numerals must be in Times New Roman") also contains "roman
+    // numeral" and would be swallowed by them, leaving the flag unset.
+    { key: 'tnr', rx: /times new roman/, onSeen: () => { ST.flags.tnrRomans = true; } },
     { key: 'romanmul', rx: /roman numerals.*multiply|multiply to/, onSeen: (r) => { const m = r.low.match(/multiply to (\d+)/); ST.flags.romanProduct = m ? +m[1] : 35; segSet('roman', toRoman(ST.flags.romanProduct)); } },
     { key: 'roman', rx: /roman numeral/, onSeen: () => { if (!segGet('roman')) segSet('roman', 'XXXV'); } },
     { key: 'length5', rx: /at least \d+ characters/ },
@@ -1108,7 +1115,6 @@
     { key: 'italic', rx: /italic/, onSeen: () => { ST.flags.italic = true; } },
     { key: 'wingdings', rx: /wingdings/, onSeen: (r) => { const m = r.low.match(/(\d+)\s*%/); ST.flags.wingRatio = m ? (+m[1]) / 100 : 0.3; } },
     { key: 'hex', rx: /hex/, onFail: colorMachine },
-    { key: 'tnr', rx: /times new roman/, onSeen: () => { ST.flags.tnrRomans = true; } },
     { key: 'digitpx', rx: /font size.*digit|digit.*font size|numbers?.*(50|px)/, onSeen: (r) => { const m = r.low.match(/(\d+)\s*px/); ST.flags.digitPx = m ? +m[1] : 50; } },
     { key: 'lettersizes', rx: /same letter|every instance|different font size/, onSeen: () => { ST.flags.letterSizes = true; } },
     { key: 'includelength', rx: /include the length|length of your password.*include|include.*length of/, onSeen: () => { ST.flags.lengthNum = true; } },
