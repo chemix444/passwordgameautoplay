@@ -144,8 +144,6 @@
   const AFFIRMATIONS = ['i am loved', 'i am worthy', 'i am enough',
     'I am loved', 'I am worthy', 'I am enough'];
 
-  const MOON_EMOJIS = ['🌑', '🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘', '🌚', '🌝', '🌛', '🌜'];
-
   const ADJACENT_PAIRS = ['hi', 'no', 'op', 'st', 'de', 'ab', 'lm', 'rs', 'tu', 'gh'];
 
   const COUNTRIES = ['afghanistan', 'albania', 'algeria', 'andorra', 'angola', 'argentina', 'armenia', 'australia',
@@ -339,75 +337,75 @@
 
   /* ------------------------------------------------------------------ *
    * Editor I/O
+   *
+   * The game's editor is a ProseMirror contenteditable. It does NOT read the
+   * password from paste/keydown events — it reads the editor node's own DOM.
+   * So the reliable commit is to overwrite `.ProseMirror`'s innerHTML directly
+   * (this is exactly what the game's own retype step does internally) and fire
+   * one input event so ProseMirror's mutation observer re-scans. Formatting
+   * (bold/italic/font) survives because it's real markup in that HTML.
    * ------------------------------------------------------------------ */
-  function findEditor() {
-    return document.querySelector('.password-box .ProseMirror')
-      || document.querySelector('.password-box [contenteditable="true"]')
-      || document.querySelector('[contenteditable="true"]')
-      || document.querySelector('.password-box input, .password-box textarea');
-  }
-
-  const editorText = () => { const ed = findEditor(); return ed ? (ed.tagName === 'INPUT' || ed.tagName === 'TEXTAREA' ? ed.value : ed.textContent) || '' : ''; };
-
-  function nativeSet(ed, value) {
-    // React/Vue track the native setter, not direct .value assignment.
-    const proto = ed.tagName === 'INPUT' ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
-    Object.getOwnPropertyDescriptor(proto, 'value').set.call(ed, value);
-    for (const type of ['keydown', 'input', 'change', 'keyup']) {
-      ed.dispatchEvent(type === 'input' || type === 'change'
-        ? new Event(type, { bubbles: true })
-        : new KeyboardEvent(type, { bubbles: true }));
+  function allEditors() {
+    let eds = [...document.querySelectorAll('.password-box .ProseMirror, .ProseMirror')].filter(isVisible);
+    if (!eds.length) {
+      const inp = [...document.querySelectorAll('.password-box input, .password-box textarea, [contenteditable="true"]')].filter(isVisible);
+      eds = inp;
     }
+    return eds;
   }
 
-  function selectAllIn(ed) {
-    ed.focus();
-    const sel = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(ed);
-    sel.removeAllRanges();
-    sel.addRange(range);
+  // The retype box that appears for the final rule must hold the SAME password
+  // as the first box, so we write the model into every visible editor — not
+  // just one — keeping them identical. Read/settle uses the last one.
+  function findEditor() {
+    const eds = allEditors();
+    return eds.length ? eds[eds.length - 1] : null;
   }
 
-  const COMMIT_STRATEGIES = ['paste', 'beforeinput', 'inserthtml', 'inserttext'];
-
-  function commitToEditor(html, plain, depth = 0) {
+  const editorText = () => {
     const ed = findEditor();
-    if (!ed) return false;
-    if (ed.tagName === 'INPUT' || ed.tagName === 'TEXTAREA') { nativeSet(ed, plain); return true; }
-    if (depth >= COMMIT_STRATEGIES.length) return false;
+    if (!ed) return '';
+    return (ed.tagName === 'INPUT' || ed.tagName === 'TEXTAREA' ? ed.value : ed.textContent) || '';
+  };
 
-    selectAllIn(ed);
-    const strat = COMMIT_STRATEGIES[ST.commitStrategy % COMMIT_STRATEGIES.length];
+  function writeEditor(ed, html, plain) {
+    if (ed.tagName === 'INPUT' || ed.tagName === 'TEXTAREA') {
+      const proto = ed.tagName === 'INPUT' ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(ed, plain);
+      ed.dispatchEvent(new Event('input', { bubbles: true }));
+      ed.dispatchEvent(new Event('change', { bubbles: true }));
+      return;
+    }
+    // Overwrite the editor node's own HTML. ProseMirror re-normalizes this
+    // (re-wrapping the inline content in its <p>) and its mutation observer
+    // notifies the game, which re-validates every rule. A synthetic 'input'
+    // nudges any listener that keys off events rather than the observer.
+    ed.innerHTML = html;
+    ed.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: plain }));
+  }
+
+  function commitToEditor(html, plain) {
+    const eds = allEditors();
+    if (!eds.length) return false;
     try {
-      if (strat === 'paste' || strat === 'beforeinput') {
-        const dt = new DataTransfer();
-        dt.setData('text/html', html);
-        dt.setData('text/plain', plain);
-        const ev = strat === 'paste'
-          ? new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })
-          : new InputEvent('beforeinput', { inputType: 'insertFromPaste', dataTransfer: dt, bubbles: true, cancelable: true });
-        ed.dispatchEvent(ev);
-        // The editor's handler calls preventDefault when it actually consumed
-        // the event; if it didn't, this strategy is a no-op — advance now.
-        if (!ev.defaultPrevented) { ST.commitStrategy++; return commitToEditor(html, plain, depth + 1); }
-      } else if (strat === 'inserthtml') {
-        if (!document.execCommand('insertHTML', false, html)) { ST.commitStrategy++; return commitToEditor(html, plain, depth + 1); }
-      } else {
-        document.execCommand('insertText', false, plain);
+      for (const ed of eds) {
+        const cur = (ed.tagName === 'INPUT' || ed.tagName === 'TEXTAREA') ? ed.value : ed.textContent;
+        if (cur !== plain) writeEditor(ed, html, plain);
       }
+      return true;
     } catch (e) {
       ST.lastError = 'commit: ' + e.message;
-      ST.commitStrategy++;
       return false;
     }
-    return true;
   }
 
   function commitIfNeeded() {
     const { html, plain } = renderRich();
-    const domText = editorText();
-    if (html === ST.lastCommittedHTML && domText === plain) return;
+    // Recommit when the model changed OR any visible box has drifted from it
+    // (fire, eaten caterpillars, or a freshly-appeared empty retype box).
+    const allMatch = allEditors().every((ed) =>
+      ((ed.tagName === 'INPUT' || ed.tagName === 'TEXTAREA') ? ed.value : ed.textContent) === plain);
+    if (html === ST.lastCommittedHTML && allMatch) return;
     if (commitToEditor(html, plain)) {
       ST.lastCommittedHTML = html;
       ST.lastCommitTick = ST.tick;
@@ -420,20 +418,14 @@
     const model = ST.modelPlain || '';
     if (!model) return;
     if (domText === model) {
-      ST.commitMismatchStreak = 0;
       const disp = readDisplayedLength();
       if (disp != null) ST.lenOffset = disp - glen(model);
     } else if (ST.tick - ST.lastCommitTick >= CONFIG.SETTLE_TICKS) {
-      // Fire chars and eaten caterpillars legitimately desync the DOM; only
-      // rotate commit strategies when the mismatch isn't explained by those.
+      // Fire chars and eaten caterpillars legitimately desync the DOM; anything
+      // else means our last write didn't stick, so force a re-commit.
       const gameMutation = /🔥/.test(domText) || ST.flags.fireFailing
         || (domText.split('🐛').length < model.split('🐛').length);
-      if (!gameMutation && ++ST.commitMismatchStreak > 3) {
-        ST.commitStrategy++;
-        ST.commitMismatchStreak = 0;
-        ST.lastError = 'editor rejected content; trying strategy ' + COMMIT_STRATEGIES[ST.commitStrategy % COMMIT_STRATEGIES.length];
-        ST.lastCommittedHTML = null; // force recommit
-      }
+      if (!gameMutation) ST.lastCommittedHTML = null;
     }
   }
 
@@ -456,22 +448,25 @@
   function scanRules() {
     const out = [];
     for (const el of document.querySelectorAll('.rule')) {
-      const topText = (el.querySelector('.rule-top')?.textContent || el.textContent || '');
+      if (!isVisible(el)) continue;
+      const topText = (el.querySelector('.rule-title')?.textContent || el.textContent || '');
       const m = topText.match(/rule\s*(\d+)/i);
       if (!m) continue;
       const num = parseInt(m[1], 10);
       const desc = (el.querySelector('.rule-desc')?.textContent || el.textContent || '').trim();
-      const failed = /(^|\s)rule-error(\s|$)/.test(el.className) || /\berror\b|\bfail/.test(el.className);
-      out.push({ num, desc, low: desc.toLowerCase(), el, passed: !failed });
+      // A failing rule carries "rule-error"; a satisfied one drops it (and
+      // usually gains "rule-success"). Keying off the error class is robust to
+      // the exact success-class name.
+      const passed = !el.classList.contains('rule-error')
+        && !/\b(invalid|incorrect)\b/i.test(el.className);
+      out.push({ num, desc, low: desc.toLowerCase(), el, passed });
     }
     out.sort((a, b) => a.num - b.num);
     return out;
   }
 
-  const ruleByNum = (n) => ST.rules.find((r) => r.num === n);
-
   function clickRefresh(ruleEl) {
-    const el = ruleEl.querySelector('[class*="refresh"], img[src*="refresh"], button[title*="refresh" i]');
+    const el = ruleEl.querySelector('.captcha-refresh, .refresh, [class*="refresh"], img[src*="refresh"], button[title*="refresh" i]');
     if (!el) return false;
     (el.closest('button') || el).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     return true;
@@ -601,9 +596,10 @@
   // digits (protects the digit-sum budget) and no uppercase Roman letters.
   function captchaMachine(rule) {
     const M = ST.machines.captcha || (ST.machines.captcha = { refreshes: 0, lastSrc: null, waitUntil: 0 });
-    const img = rule.el.querySelector('img[src*="captcha"]');
+    const img = rule.el.querySelector('.captcha-img, img[src*="captcha"]');
     if (!img) return;
-    const m = img.getAttribute('src').match(/captchas\/([^./]+)\./);
+    // The captcha text is the image's own filename, e.g. ".../a1b2c3.png".
+    const m = (img.getAttribute('src') || '').match(/\/([a-z0-9]+)\.(?:png|jpg|jpeg|webp)/i);
     if (!m) return;
     const code = m[1];
     if (Date.now() < M.waitUntil) return;
@@ -624,7 +620,8 @@
     const M = ST.machines.color || (ST.machines.color = { refreshes: 0, waitUntil: 0 });
     if (Date.now() < M.waitUntil) return;
     let hex = null;
-    for (const el of rule.el.querySelectorAll('[style*="background"]')) {
+    const swatches = rule.el.querySelectorAll('.rand-color, [style*="background"]');
+    for (const el of swatches) {
       const bg = el.style.backgroundColor || getComputedStyle(el).backgroundColor;
       const m = bg && bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
       if (m) {
@@ -645,8 +642,8 @@
   function chessMachine(rule) {
     const M = ST.machines.chess || (ST.machines.chess = { status: 'idle' });
     if (M.status === 'idle') {
-      const img = rule.el.querySelector('img[src*="chess"]');
-      const m = img && img.getAttribute('src').match(/puzzle(\d+)/i);
+      const img = rule.el.querySelector('.chess-img, img[src*="chess"], img[src*="puzzle"]');
+      const m = img && (img.getAttribute('src') || '').match(/puzzle(\d+)/i);
       if (!m) return;
       M.puzzle = parseInt(m[1], 10);
       M.status = 'loading';
@@ -661,17 +658,27 @@
               } catch (e) { /* skip unfetchable bundle */ }
             } else blob += s.textContent || '';
           }
-          // Find the array literal in the bundle whose entries look like SAN moves.
           let best = null;
+          // Form 1: a plain array of SAN strings.
           for (const cand of blob.match(/\[(?:\s*"[^"]{2,10}"\s*,){20,}\s*"[^"]{2,10}"\s*\]/g) || []) {
             try {
               const arr = JSON.parse(cand);
-              const sanRatio = arr.filter((x) => SAN_RX.test(x)).length / arr.length;
-              if (sanRatio > 0.9 && arr.length >= 50 && (!best || arr.length > best.length)) best = arr;
+              const ratio = arr.filter((x) => SAN_RX.test(x)).length / arr.length;
+              if (ratio > 0.9 && arr.length >= 30 && (!best || arr.length > best.length)) best = arr;
             } catch (e) { /* not JSON */ }
           }
+          // Form 2 (what neal.fun actually ships): an array of puzzle objects,
+          // each with a SAN answer under sol/move/answer/best/san. Collect those
+          // values in bundle order — that order is the puzzle index.
+          if (!best) {
+            const moves = [];
+            const rx = /(?:sol|move|answer|best|san)\s*:\s*["']([^"']{2,8})["']/g;
+            let m;
+            while ((m = rx.exec(blob))) if (SAN_RX.test(m[1])) moves.push(m[1]);
+            if (moves.length >= 30) best = moves;
+          }
           if (best) { M.solutions = best; M.status = 'have'; }
-          else { M.status = 'failed'; ST.lastError = 'chess: no solution array found in bundle (use HUD manual override)'; }
+          else { M.status = 'failed'; ST.lastError = 'chess: solution list not found in bundle — click the rule in the HUD to type the move (e.g. Qh5#)'; }
         } catch (e) {
           M.status = 'failed';
           ST.lastError = 'chess: ' + e.message;
@@ -796,21 +803,21 @@
       if (picks.length < 2) { ST.lastError = 'sacrifice: fewer than 2 unused letters available'; return; }
       M.chosen = picks;
     }
-    // Letter tiles are plain clickable elements whose entire text is one letter.
-    for (const el of rule.el.querySelectorAll('button, div, span, li')) {
+    // Letter tiles live in ".sacrafice-area .letters" (the game's own spelling);
+    // each child's text contains a single letter. Fall back to a broad scan.
+    const tiles = rule.el.querySelectorAll('.sacrafice-area .letters *, .sacrifice-area .letters *, button, div, span, li');
+    for (const el of tiles) {
+      if (el.children.length) continue;
       const t = (el.textContent || '').trim().toLowerCase();
-      if (t.length === 1 && M.chosen.includes(t) && !M.clicked.has(t) && el.children.length === 0) {
+      if (t.length === 1 && M.chosen.includes(t) && !M.clicked.has(t)) {
         el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
         M.clicked.add(t);
       }
     }
     if (M.clicked.size >= 2 && Date.now() > M.confirmAt) {
-      for (const b of rule.el.querySelectorAll('button')) {
-        if (/sacrifice|confirm|submit|ok/i.test(b.textContent || '')) {
-          b.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-          break;
-        }
-      }
+      const btn = rule.el.querySelector('.sacrafice-btn, .sacrifice-btn')
+        || [...rule.el.querySelectorAll('button')].find((b) => /sacrifice|confirm|submit/i.test(b.textContent || ''));
+      if (btn) btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       M.confirmAt = Date.now() + 1000;
       M.chosen.forEach((c) => ST.banned.add(c));
     }
@@ -845,14 +852,23 @@
   // let the normal commit loop repopulate the (now empty) retype box.
   function finalMachine(rule) {
     const M = ST.machines.final || (ST.machines.final = { lastClick: 0 });
+    // Once the retype box exists the commit loop keeps both boxes in sync — the
+    // rule passes on its own, so there is nothing left to click.
+    if (allEditors().length > 1 || document.querySelector('.retype-box')) return;
+    // Confirm only when every OTHER rule is green and the password has stopped
+    // changing. Clicking early freezes the first box at a half-built password
+    // that the (still-evolving) retype can never match.
+    const othersPass = ST.rules.every((r) => r.num === rule.num || r.passed);
+    const stable = ST.tick - ST.lastCommitTick >= 6;
+    if (!othersPass || !stable) { ST.action = 'final: waiting for a stable, all-green password'; return; }
     if (Date.now() - M.lastClick < 1200) return;
-    for (const b of rule.el.querySelectorAll('button')) {
-      if (/yes|final|confirm|continue|✓/i.test(b.textContent || '') || rule.el.querySelectorAll('button').length === 1) {
-        b.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-        M.lastClick = Date.now();
-        ST.lastCommittedHTML = null; // force a recommit into whatever box remains
-        return;
-      }
+    const btn = document.querySelector('.final-password button')
+      || [...rule.el.querySelectorAll('button')].find((b) =>
+        /yes|final|confirm|continue|✓/i.test(b.textContent || ''));
+    if (btn && isVisible(btn)) {
+      btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      M.lastClick = Date.now();
+      ST.lastCommittedHTML = null; // force a recommit to fill the new retype box
     }
   }
 
@@ -992,17 +1008,28 @@
     { key: 'number', rx: /include a number/, onSeen: () => { ST.flags.needNumber = true; } },
     { key: 'upper', rx: /uppercase letter/, onSeen: () => { if (!/[A-Z]/.test(segGet('base'))) segSet('base', 'A!' ); } },
     { key: 'special', rx: /special character/ },
-    { key: 'month', rx: /month of the year/, onFail: (r) => getProber('month', 'month', () => MONTHS.concat(MONTHS.map((m) => m[0].toUpperCase() + m.slice(1)))).step(r) },
-    { key: 'sponsor', rx: /sponsor/, onFail: (r) => getProber('sponsor', 'sponsor', () => SPONSORS).step(r) },
+    // Probers are stepped every tick (onTick), not only while failing: after a
+    // batch makes the rule pass they must keep narrowing (binary search) down
+    // to a single value and lock, otherwise the password stays bloated and the
+    // segment never stabilises for the final retype.
+    //
+    // Lowercase months only: the rule matches case-insensitively, and a
+    // capitalized "May"/"March"/"December" would inject an uppercase roman
+    // letter (M, D) that breaks the roman-numerals-multiply rule.
+    { key: 'month', rx: /month of the year/, onTick: (r) => getProber('month', 'month', () => MONTHS.slice()).step(r) },
+    { key: 'sponsor', rx: /sponsor/, onTick: (r) => getProber('sponsor', 'sponsor', () => SPONSORS).step(r) },
     { key: 'captcha', rx: /captcha/, onFail: captchaMachine },
-    { key: 'wordle', rx: /wordle/, onFail: wordleMachine },
+    { key: 'wordle', rx: /wordle/, onTick: wordleMachine },
     { key: 'periodic', rx: /two letter symbol|periodic table/, onSeen: () => { ST.flags.needTwoLetterElement = true; } },
-    { key: 'moon', rx: /phase of the moon/, onFail: (r) => getProber('moon', 'moon', () => { const g = computeMoonEmoji(); return [g, ...MOON_EMOJIS.filter((e) => e !== g)]; }).step(r) },
-    { key: 'country', rx: /name of this country|country/, onFail: (r) => getProber('country', 'country', () => COUNTRIES.slice()).step(r) },
+    // Include all eight lunar-phase glyphs at once: whichever one the game
+    // wants is guaranteed present, and the extras are inert everywhere else.
+    // Far more reliable than computing/guessing a single phase.
+    { key: 'moon', rx: /phase of the moon/, onSeen: () => segSet('moon', '🌑🌒🌓🌔🌕🌖🌗🌘') },
+    { key: 'country', rx: /name of this country|country/, onTick: (r) => getProber('country', 'country', () => COUNTRIES.slice()).step(r) },
     { key: 'leap', rx: /leap year/, onSeen: () => segSet('leap', '2000') },
-    { key: 'chess', rx: /chess|algebraic/, onFail: chessMachine },
+    { key: 'chess', rx: /chess|algebraic/, onTick: chessMachine },
     { key: 'strong', rx: /strong enough/, onSeen: (r) => { const e = (r.desc.match(EMOJI_RX) || ['🏋️‍♂️'])[0]; segSet('strong', e.repeat(3)); }, onFail: strongAdaptive },
-    { key: 'affirm', rx: /affirmation/, onFail: (r) => getProber('affirm', 'affirm', () => AFFIRMATIONS).step(r) },
+    { key: 'affirm', rx: /affirmation/, onTick: (r) => getProber('affirm', 'affirm', () => AFFIRMATIONS).step(r) },
     { key: 'bold', rx: /vowel.*bold|bold.*vowel/, onSeen: () => { ST.flags.boldVowels = true; } },
     { key: 'youtube', rx: /youtube/, onFail: youtubeMachine },
     { key: 'sacrifice', rx: /sacrifice|no longer be able to use/, onFail: sacrificeMachine },
@@ -1017,7 +1044,7 @@
     // onTick (not onFail): the minute rollover must refresh the segment even
     // while the rule is currently green.
     { key: 'time', rx: /current time/, onTick: timeMachine },
-    { key: 'adjacent', rx: /adjacent (in|on) the alphabet|alphabet.*adjacent/, onFail: (r) => getProber('adjacent', 'adjacent', () => ADJACENT_PAIRS).step(r) },
+    { key: 'adjacent', rx: /adjacent (in|on) the alphabet|alphabet.*adjacent/, onTick: (r) => getProber('adjacent', 'adjacent', () => ADJACENT_PAIRS).step(r) },
   ];
 
   function strongAdaptive(rule) {
@@ -1031,15 +1058,6 @@
       segSet('strong', e.repeat(M.count));
       M.stuckSince = ST.tick;
     }
-  }
-
-  function computeMoonEmoji() {
-    const synodic = 29.53058867;
-    const known = Date.UTC(2000, 0, 6, 18, 14) / 864e5;
-    const days = Date.now() / 864e5 - known;
-    const phase = ((days % synodic) + synodic) % synodic;
-    const idx = Math.floor((phase / synodic) * 8 + 0.5) % 8;
-    return ['🌑', '🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘'][idx];
   }
 
   function matchHandler(rule) {
@@ -1095,22 +1113,43 @@
 
   /* ------------------------------------------------------------------ *
    * Death / win watchers
+   *
+   * The win and death screens are pre-rendered in the DOM and merely hidden
+   * (display:none / off-screen) until triggered — so scanning raw textContent
+   * matches them on the very first tick and falsely reports a win. We must only
+   * read text from elements that are actually VISIBLE.
    * ------------------------------------------------------------------ */
-  function gameText() {
+  function isVisible(el) {
+    if (!el || !el.isConnected) return false;
+    if (el.offsetParent === null && getComputedStyle(el).position !== 'fixed') return false;
+    const s = getComputedStyle(el);
+    if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+
+  function visibleText() {
+    // Walk visible leaf-ish nodes only. Cheap enough at our tick rate.
     let out = '';
-    for (const el of document.body.children) {
-      if (el.id === 'pgap-hud') continue;
-      out += el.textContent || '';
-    }
+    const walk = (el) => {
+      if (el.id === 'pgap-hud' || el.nodeType !== 1) return;
+      if (!isVisible(el)) return;
+      if (!el.children.length) { out += ' ' + (el.textContent || ''); return; }
+      for (const c of el.children) walk(c);
+    };
+    for (const el of document.body.children) walk(el);
     return out;
   }
 
-  const DEATH_RX = /paul[^.]{0,60}(slain|killed|died|dead|starved|burn|overfed|ate too much)|game\s*over/i;
-  const WIN_RX = /you (win|won)|congratulations/i;
+  const DEATH_RX = /paul (was|has been) (slain|killed|eaten)|paul (died|is dead|starved|burned)|you (killed|starved|overfed) paul|game\s*over/i;
+  const WIN_RX = /you win|you won|password game complete|you'?ve? (beaten|won|completed)/i;
 
   function watchDeathWin() {
-    const t = gameText();
-    if (WIN_RX.test(t)) {
+    const t = visibleText();
+    // A real win also means every rule that ever existed is gone/passed; require
+    // that corroboration so a stray matching string can't end the run early.
+    const noFailing = ST.rules.length > 0 && ST.rules.every((r) => r.passed);
+    if (WIN_RX.test(t) && (noFailing || ST.maxRuleSeen >= 20)) {
       ST.won = true;
       ST.running = false;
       ST.action = 'WON 🎉';
@@ -1233,7 +1272,7 @@
   // Safety net death watcher, in case the main loop is wedged mid-await.
   function safetyTick() {
     if (ST.won || ST.dead) return;
-    if (DEATH_RX.test(gameText())) {
+    if (DEATH_RX.test(visibleText())) {
       ST.dead = true;
       ST.running = false;
       setTimeout(() => location.reload(), CONFIG.RESTART_DELAY_MS);
