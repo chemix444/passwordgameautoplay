@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Password Game Autoplay
 // @namespace    https://github.com/chemix444/passwordgameautoplay
-// @version      1.0.0
+// @version      1.1.0
 // @description  Unattended auto-solver for neal.fun's The Password Game — rule 1 through the win screen.
 // @author       chemix444
 // @match        https://neal.fun/password-game/*
@@ -9,14 +9,11 @@
 // @noframes
 // @grant        GM_xmlhttpRequest
 // @connect      neal.fun
-// @connect      pipedapi.kavin.rocks
+// @connect      youtube.com
+// @connect      www.youtube.com
+// @connect      update.greasyfork.org
 // @connect      pipedapi.adminforge.de
 // @connect      api.piped.private.coffee
-// @connect      pipedapi.ducks.party
-// @connect      inv.nadeko.net
-// @connect      yewtu.be
-// @connect      invidious.nerdvpn.de
-// @connect      iv.ggtyler.dev
 // @connect      www.googleapis.com
 // @connect      www.nytimes.com
 // @license      MIT
@@ -731,64 +728,109 @@
     }
   }
 
+  // A video id containing uppercase roman letters would multiply into the
+  // roman-numeral product — except runs of a single "I", which multiply by 1
+  // and are harmless.
+  const okVideoId = (id) => /^[\w-]{11}$/.test(id) && !hasBanned(id)
+    && (id.match(/[IVXLCDM]+/g) || []).every((run) => run === 'I');
+
+  // Community-curated duration→video map from Mabi19's password-game-tas
+  // (fetched from where the author published it, at runtime, so we don't
+  // redistribute the data). Values are "<11-char video id><element padding>";
+  // the durations are the ones the game's own API reports, which occasionally
+  // differ by ±1s from what YouTube search displays.
+  let TAS_MAP = null;
+  async function tasDurationMap() {
+    if (TAS_MAP) return TAS_MAP;
+    const src = await gmFetch('https://update.greasyfork.org/scripts/480234/The%20Password%20Game%20%28TAS%20Userscript%29.user.js', 20000);
+    const map = {};
+    const rx = /"(\d{1,2}:\d{2})"\s*:\s*"([\w-]{11,20})"/g;
+    let m;
+    while ((m = rx.exec(src))) map[m[1]] = m[2].slice(0, 11);
+    if (!Object.keys(map).length) throw new Error('duration map empty');
+    return (TAS_MAP = map);
+  }
+
+  // Scrape a youtube.com search-results page for (videoId, displayed length)
+  // pairs. Results are videoRenderer JSON blobs; lengthText nests an
+  // accessibility object before its simpleText, hence the loose middle match.
+  function parseYtSearch(html) {
+    const out = [];
+    const seen = new Set();
+    for (const chunk of html.split('"videoRenderer":{"videoId":"').slice(1)) {
+      const id = chunk.slice(0, 11);
+      if (!/^[\w-]{11}$/.test(id) || seen.has(id)) continue;
+      seen.add(id);
+      const lm = chunk.slice(0, 6000).match(/"lengthText":\{.{0,400}?"simpleText":"(\d+(?::\d{2}){1,2})"/);
+      if (!lm) continue;
+      out.push({ id, s: lm[1].split(':').map(Number).reduce((a, p) => a * 60 + p, 0) });
+    }
+    return out;
+  }
+
   async function searchYoutube(M) {
     const secs = M.secs;
     const mins = Math.floor(secs / 60), rem = secs % 60;
-    const okId = (id) => /^[A-Za-z0-9_-]{6,15}$/.test(id) && !/[IVXLCDM]/.test(id) && !hasBanned(id);
-    const score = (id) => digitSum(id) * 2 + [...id].filter((c) => /[A-Z]/.test(c)).length;
+    const key = `${mins}:${String(rem).padStart(2, '0')}`;
+    // candidates are probed cheapest-first: tier, then digit/element cost
+    const score = (id) => digitSum(id) * 2 + scanElements(id) / 50;
     const found = new Map();
-    const add = (id) => { if (okId(id) && !found.has(id)) found.set(id, score(id)); };
+    const add = (id, tier) => { if (okVideoId(id) && !found.has(id)) found.set(id, tier * 1000 + score(id)); };
 
-    (YT_FALLBACK_POOL[secs] || []).forEach(add);
+    (YT_FALLBACK_POOL[secs] || []).forEach((id) => add(id, 0));
+
+    try {
+      const map = await tasDurationMap();
+      if (map[key]) add(map[key], 1);
+    } catch (e) { ST.lastError = 'youtube: duration map unavailable (' + e.message + '), falling back to search'; }
 
     const queries = [
       `${mins} minute ${rem} second timer`,
-      `${mins} min ${rem} sec timer`,
-      `${mins} minutes ${rem} seconds`,
-      `timer ${mins}:${String(rem).padStart(2, '0')}`,
+      `${mins} minutes ${rem} seconds timer`,
+      `${mins} minute ${rem} second countdown`,
+      `"${key}" timer`,
     ];
 
-    const piped = ['https://pipedapi.kavin.rocks', 'https://pipedapi.adminforge.de',
-      'https://api.piped.private.coffee', 'https://pipedapi.ducks.party'];
-    const invidious = ['https://inv.nadeko.net', 'https://yewtu.be',
-      'https://invidious.nerdvpn.de', 'https://iv.ggtyler.dev'];
-
     for (const q of queries) {
-      if (found.size >= 8) break;
-      for (const base of piped) {
-        try {
-          const j = JSON.parse(await gmFetch(`${base}/search?q=${encodeURIComponent(q)}&filter=videos`, 8000));
-          for (const it of j.items || []) {
-            if (it.duration === secs && it.url) add((it.url.match(/v=([\w-]+)/) || [])[1] || '');
-          }
-          break; // instance responded; don't hammer the rest for this query
-        } catch (e) { /* dead instance, next */ }
-      }
-      for (const base of invidious) {
-        if (found.size >= 8) break;
-        try {
-          const j = JSON.parse(await gmFetch(`${base}/api/v1/search?q=${encodeURIComponent(q)}&type=video`, 8000));
-          for (const it of j) if (it.lengthSeconds === secs && it.videoId) add(it.videoId);
-          break;
-        } catch (e) { /* dead instance, next */ }
-      }
+      if (found.size >= 4) break;
+      try {
+        const html = await gmFetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`, 12000);
+        for (const { id, s } of parseYtSearch(html)) {
+          if (s === secs) add(id, 2);
+          else if (s === secs + 1) add(id, 4); // display rounding can be +1 vs the game's API
+        }
+      } catch (e) { /* search page unreachable; try next query */ }
     }
 
     if (CONFIG.YT_API_KEY && found.size < 4) {
       try {
-        const key = CONFIG.YT_API_KEY;
+        const apiKey = CONFIG.YT_API_KEY;
         for (const q of queries.slice(0, 2)) {
-          const s = JSON.parse(await gmFetch(`https://www.googleapis.com/youtube/v3/search?part=id&type=video&maxResults=25&q=${encodeURIComponent(q)}&key=${key}`));
+          const s = JSON.parse(await gmFetch(`https://www.googleapis.com/youtube/v3/search?part=id&type=video&maxResults=25&q=${encodeURIComponent(q)}&key=${apiKey}`));
           const ids = (s.items || []).map((i) => i.id.videoId).filter(Boolean);
           if (!ids.length) continue;
-          const v = JSON.parse(await gmFetch(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${ids.join(',')}&key=${key}`));
+          const v = JSON.parse(await gmFetch(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${ids.join(',')}&key=${apiKey}`));
           for (const it of v.items || []) {
             const d = it.contentDetails.duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
             const dur = (+(d[1] || 0)) * 3600 + (+(d[2] || 0)) * 60 + (+(d[3] || 0));
-            if (dur === secs) add(it.id);
+            if (dur === secs) add(it.id, 2);
           }
         }
       } catch (e) { ST.lastError = 'youtube api: ' + e.message; }
+    }
+
+    // Last resort: public Piped/Invidious instances (most are dead or blocked,
+    // but they cost nothing to try when everything above came up empty).
+    if (!found.size) {
+      for (const base of ['https://pipedapi.adminforge.de', 'https://api.piped.private.coffee']) {
+        try {
+          const j = JSON.parse(await gmFetch(`${base}/search?q=${encodeURIComponent(queries[0])}&filter=videos`, 8000));
+          for (const it of j.items || []) {
+            if (it.duration === secs && it.url) add((it.url.match(/v=([\w-]+)/) || [])[1] || '', 5);
+          }
+          break;
+        } catch (e) { /* dead instance, next */ }
+      }
     }
 
     return [...found.entries()].sort((a, b) => a[1] - b[1]).map(([id]) => id);

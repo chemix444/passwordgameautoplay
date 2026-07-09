@@ -29,8 +29,22 @@ const MOCK = 'file://' + path.resolve(__dirname, 'mock-game.html');
   const before = await page.evaluate(() => window.__STATE__);
   assert(!before.won, 'mock should not start in a won state');
 
-  // Stub the @grant'd network helper so offline rules degrade gracefully.
-  await page.addScriptTag({ content: 'window.GM_xmlhttpRequest=function(o){o.onerror&&o.onerror();};' });
+  // Stub the @grant'd network helper: canned responses for the YouTube rule's
+  // sources (duration map + search page), errors for everything else so
+  // offline rules degrade gracefully. The map entry carries the real-world
+  // "<id><element padding>" shape, and the search result is a roman-lettered id
+  // the solver must reject (X would break the roman-product rule).
+  await page.addScriptTag({ content: `
+    window.GM_xmlhttpRequest = function (o) {
+      const ok = (text) => setTimeout(() => o.onload && o.onload({ status: 200, responseText: text }), 30);
+      if (/greasyfork/.test(o.url)) {
+        ok('var y0={"4:11":"zzzzzzzzzzzZr","4:12":"wivuhAAxlecTsBa"};');
+      } else if (/youtube\\.com\\/results/.test(o.url)) {
+        ok('"videoRenderer":{"videoId":"hXFE4Rxa52o","thumb":{},"lengthText":{"accessibility":{"accessibilityData":{"label":"4 minutes, 12 seconds"}},"simpleText":"4:12"}}');
+      } else {
+        setTimeout(() => o.onerror && o.onerror(new Error('blocked')), 10);
+      }
+    };` });
   await page.addScriptTag({ content: fs.readFileSync(SCRIPT, 'utf8') });
 
   // Regression guard for the original bug: no instant false win.
