@@ -57,6 +57,18 @@
     return sawVowel;
   }
   const COUNTRIES=/afghanistan|australia|belgium|brazil|canada|china|denmark|egypt|france|germany|india|japan|kenya|mexico|norway|peru|qatar|russia|spain|turkey|ukraine|vietnam|yemen|zambia/i;
+  // Rule 29: every text node containing a roman numeral must render in
+  // Times New Roman (checked via computed style, like the real game would see).
+  function romansTnr(){
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+    let saw = false, node;
+    while ((node = walker.nextNode())) {
+      if (!/[IVXLCDM]/.test(node.nodeValue)) continue;
+      saw = true;
+      if (!/times new roman/i.test(getComputedStyle(node.parentElement).fontFamily)) return false;
+    }
+    return saw;
+  }
   // Stand-in for the game's YouTube duration check: only this id is 4:12 long.
   const YT_DURATIONS = { wivuhAAxlec: 252 };
   function ytOk(){
@@ -86,6 +98,7 @@
     { desc: 'Your password must include a leap year.', test: () => hasLeap(pw()) },
     { desc: 'The elements in your password must have atomic numbers that add up to 200.', test: () => atomicSum(pw()) === 200 },
     { desc: 'All the vowels in your password must be bolded.', test: () => vowelsBolded() },
+    { desc: 'All roman numerals must be in Times New Roman.', test: () => romansTnr() },
     { desc: 'Your password must include the URL of a 4 minute 12 second long YouTube video.', test: () => ytOk() },
     { desc: 'Your password must include the name of this country: France.', test: () => COUNTRIES.test(pw()) },
     { desc: 'The length of your password must be a prime number.', test: () => isPrime(pw().length) },
