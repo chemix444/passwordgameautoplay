@@ -25,7 +25,7 @@ node test/run.js /path/to/chromium
 Expected output:
 
 ```
-PASS — solved all 17 rules with no false win.
+PASS — solved all 18 rules with no false win.
 ```
 
 ## What it covers
@@ -33,8 +33,9 @@ PASS — solved all 17 rules with no false win.
 Editor commit mechanism, dynamic rule detection, month/country/adjacent probing
 with binary-search narrowing and locking, the all-moon-phases trick, captcha
 refresh, the digit-sum and atomic-number balancers (including accounting for the
-stray `V` in `XXXV`), prime-length filler, the two-box final retype, and the
-visibility-gated win/death watchers.
+stray `V` in `XXXV`), bold-vowels rendering (y counts as a vowel, checked via
+real `<b>` ancestry in the editor DOM), prime-length filler, the two-box final
+retype, and the visibility-gated win/death watchers.
 
 ## What it does NOT cover
 
