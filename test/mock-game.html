@@ -90,6 +90,8 @@
     { desc: 'Your password must include the name of this country: France.', test: () => COUNTRIES.test(pw()) },
     { desc: 'The length of your password must be a prime number.', test: () => isPrime(pw().length) },
     { desc: 'Your password is not strong enough.', test: () => pw().replace(/\s/g,'').length >= 20 },
+    // Like the live game, the affirmations only match with spaces stripped.
+    { desc: 'Your password must contain one of the following affirmations: I am loved I am worthy I am enough', test: () => /iamloved|iamworthy|iamenough/.test(pw()) },
     { desc: 'Please re-type your password to confirm.', final: true, test: () => finalDone },
   ];
   let finalDone = false;

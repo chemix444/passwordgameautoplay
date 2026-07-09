@@ -88,7 +88,8 @@ the HUD's per-rule manual override. See [Troubleshooting](#troubleshooting).
 | Digits sum to 25 | Balancer segment recomputed from *all* digits in the model every cycle (leap year, chess rank, hex color, video id, time, length number all feed in). If fixed digits overshoot 25, the HUD shows a conflict and waits — a minute rollover usually resolves it. |
 | Month | Probed, lowercase only (a capitalized `May`/`March`/`December` would inject an uppercase roman letter and break the roman-numeral rule). |
 | Roman numerals ×35 | Single numeral `XXXV` (product = 35 on its own). Uppercase `IVXLCDM` are then treated as reserved: month names, element pool, captcha, video ids, and chess candidates are all filtered against them. Lowercase is safe — the game only reads uppercase runs. |
-| Sponsors / affirmation | Probed across the known lists in both capitalizations. |
+| Sponsors | Probed across the known list in both capitalizations. |
+| Affirmation | Probed spaceless-first (`iamloved`, `iamworthy`, `iamenough`): the game matches the affirmations with spaces stripped, and contenteditable editors can smuggle non-breaking spaces into typed text anyway. Spaced and capitalized forms remain as fallback candidates (capital `I` costs 53 in the element balance while a probe batch is present — transient and self-healing). |
 | CAPTCHA | Code scraped from the image filename (`.captcha-img`); the `.captcha-refresh` button is clicked until the code has no digits and no Roman letters (bounded attempts). |
 | Wordle | Fetched from the game's own API (`/api/password-game/wordle?date=…`) — the same endpoint the game queries, so it can't disagree. NYT is a fallback. |
 | Moon phase | All eight lunar-phase glyphs `🌑🌒🌓🌔🌕🌖🌗🌘` are included at once, so whichever the game wants is present. No date math, no wrong-emoji risk. |

@@ -25,7 +25,7 @@ node test/run.js /path/to/chromium
 Expected output:
 
 ```
-PASS — solved all 19 rules with no false win.
+PASS — solved all 20 rules with no false win.
 ```
 
 ## What it covers
@@ -34,7 +34,8 @@ Editor commit mechanism, dynamic rule detection, month/country/adjacent probing
 with binary-search narrowing and locking, the all-moon-phases trick, captcha
 refresh, the digit-sum and atomic-number balancers (including accounting for the
 stray `V` in `XXXV`), bold-vowels rendering (y counts as a vowel, checked via
-real `<b>` ancestry in the editor DOM), the YouTube exact-duration machine
+real `<b>` ancestry in the editor DOM — including the formatting-only-change
+commit path), the spaceless affirmation matching, the YouTube exact-duration machine
 (rule-text parsing, duration-map fetch with element-padding stripping, rejection
 of roman-lettered ids, URL probing — network sources served canned by the GM
 stub), prime-length filler, the two-box final retype, and the visibility-gated
