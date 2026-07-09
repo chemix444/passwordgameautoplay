@@ -1,0 +1,131 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>The Password Game</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  .password-box { border: 2px solid #333; padding: 8px; min-height: 40px; max-width: 700px; }
+  .ProseMirror { outline: none; min-height: 24px; white-space: pre-wrap; word-break: break-all; }
+  .password-length { color: #666; font-size: 12px; }
+  .rule { border: 1px solid #ccc; border-radius: 8px; padding: 10px; margin: 8px 0; max-width: 700px; }
+  .rule-error { background: #fdecea; border-color: #f5c6cb; }
+  .rule-success { background: #eafaf0; border-color: #b7e4c7; }
+  .rule-title { font-weight: bold; }
+  .captcha-img { width: 120px; height: 40px; }
+  /* Win/lose screens are pre-rendered but hidden — the exact trap the solver must avoid. */
+  .win-screen, .lose-screen { display: none; }
+  .win-screen.show { display: block; }
+</style></head>
+<body>
+  <h1>The Password Game</h1>
+  <div class="password-box"><div class="ProseMirror" contenteditable="true"><p></p></div></div>
+  <div class="password-length">0</div>
+  <div class="rules-container"></div>
+
+  <!-- Pre-rendered, hidden. If the solver scans raw textContent it will falsely "win" on tick 1. -->
+  <div class="win-screen"><h2>You win! Congratulations, you have created a valid password.</h2></div>
+  <div class="lose-screen"><h2>Paul was slain. Game over.</h2></div>
+
+<script>
+(function () {
+  const editor = document.querySelector('.ProseMirror');
+  const lenEl = document.querySelector('.password-length');
+  const container = document.querySelector('.rules-container');
+  const winScreen = document.querySelector('.win-screen');
+
+  // Read the visible password text (what the game validates against).
+  function curBox() { const b=[...document.querySelectorAll('.password-box .ProseMirror')].filter(e=>e.offsetParent!==null); return b[0]||editor; }
+  function pw() { return (editor.textContent || ''); }
+  function html() { return editor.innerHTML || ''; }
+  function digitSum(s){ return (s.match(/[0-9]/g)||[]).reduce((a,c)=>a+ +c,0); }
+  function romanProduct(s){ const V={I:1,V:5,X:10,L:50,C:100,D:500,M:1000}; const runs=s.match(/[IVXLCDM]+/g)||[]; if(!runs.length) return null; let p=1; for(const r of runs){ let v=0; for(let i=0;i<r.length;i++){ const c=V[r[i]],n=V[r[i+1]]; v+= (n&&c<n)?-c:c; } p*=v; } return p; }
+  const ELEM={H:1,He:2,Li:3,Be:4,B:5,C:6,N:7,O:8,F:9,Ne:10,Na:11,Mg:12,Al:13,Si:14,P:15,S:16,Cl:17,Ar:18,K:19,Ca:20,Sc:21,Ti:22,V:23,Cr:24,Mn:25,Fe:26,Co:27,Ni:28,Cu:29,Zn:30,Ga:31,Ge:32,As:33,Se:34,Br:35,Kr:36,Rb:37,Sr:38,Y:39,Zr:40,Nb:41,Mo:42,Tc:43,Ru:44,Rh:45,Pd:46,Ag:47,Cd:48,In:49,Sn:50,Sb:51,Te:52,I:53,Xe:54,Cs:55,Ba:56,La:57,Ce:58,Pr:59,Nd:60,W:74,Re:75,Os:76,Ir:77,Pt:78,Au:79,Hg:80,Tl:81,Pb:82,Bi:83,Po:84,At:85,Rn:86,Ra:88,Th:90,U:92};
+  function atomicSum(s){ let sum=0; for(let i=0;i<s.length;i++){ const two=s.substr(i,2); if(ELEM[two]!=null){sum+=ELEM[two];i++;continue;} if(ELEM[s[i]]!=null) sum+=ELEM[s[i]]; } return sum; }
+  function hasAdjacent(s){ for(let i=0;i<s.length-1;i++){ const a=s[i].toLowerCase(), b=s[i+1].toLowerCase(); if(/[a-z]/.test(a)&&/[a-z]/.test(b)&&Math.abs(a.charCodeAt(0)-b.charCodeAt(0))===1) return true; } return false; }
+  function hasLeap(s){ const m=s.match(/\d{4}/g)||[]; return m.some(y=>{y=+y; return (y%4===0&&y%100!==0)||y%400===0;}); }
+  function isPrime(n){ if(n<2)return false; for(let i=2;i*i<=n;i++) if(n%i===0)return false; return true; }
+  const COUNTRIES=/afghanistan|australia|belgium|brazil|canada|china|denmark|egypt|france|germany|india|japan|kenya|mexico|norway|peru|qatar|russia|spain|turkey|ukraine|vietnam|yemen|zambia/i;
+
+  // Captcha state: a code embedded in an image filename, refreshable.
+  let captchaCode = 'a1b2c3'; // starts digit-heavy so the solver must refresh
+  function rerollCaptcha(){ const cs='abcdefghijklmnopqrstuvwxyz0123456789'; captchaCode=Array.from({length:6},()=>cs[Math.floor(Math.random()*cs.length)]).join(''); }
+
+  const MOON = '\u{1F317}'; // the "correct" phase the game wants this run
+
+  // Ordered rule definitions. `test` returns true when satisfied.
+  const RULES = [
+    { desc: 'Your password must be at least 5 characters.', test: () => pw().length >= 5 },
+    { desc: 'Your password must include a number.', test: () => /[0-9]/.test(pw()) },
+    { desc: 'Your password must include an uppercase letter.', test: () => /[A-Z]/.test(pw()) },
+    { desc: 'Your password must include a special character.', test: () => /[^a-zA-Z0-9\s]/.test(pw()) },
+    { desc: 'The digits in your password must add up to 25.', test: () => digitSum(pw()) === 25 },
+    { desc: 'Your password must include a month of the year.', test: () => /january|february|march|april|may|june|july|august|september|october|november|december/i.test(pw()) },
+    { desc: 'Your password must include the current phase of the moon as an emoji.', test: () => pw().includes(MOON) },
+    { desc: 'Your password must include this CAPTCHA.', captcha: true, test: () => pw().includes(captchaCode) },
+    { desc: 'Your password must include a roman numeral.', test: () => /[IVXLCDM]/.test(pw()) },
+    { desc: 'The roman numerals in your password must multiply to 35.', test: () => romanProduct(pw()) === 35 },
+    { desc: 'Your password must include two letters that are adjacent in the alphabet.', test: () => hasAdjacent(pw()) },
+    { desc: 'Your password must include a leap year.', test: () => hasLeap(pw()) },
+    { desc: 'The elements in your password must have atomic numbers that add up to 200.', test: () => atomicSum(pw()) === 200 },
+    { desc: 'Your password must include the name of this country: France.', test: () => COUNTRIES.test(pw()) },
+    { desc: 'The length of your password must be a prime number.', test: () => isPrime(pw().length) },
+    { desc: 'Your password is not strong enough.', test: () => pw().replace(/\s/g,'').length >= 20 },
+    { desc: 'Please re-type your password to confirm.', final: true, test: () => finalDone },
+  ];
+  let finalDone = false;
+
+  let unlocked = 1; // reveal rules progressively, like the real game
+  const ruleEls = [];
+
+  function buildRule(i) {
+    const def = RULES[i];
+    const el = document.createElement('div');
+    el.className = 'rule rule-error';
+    el.innerHTML = '<div class="rule-title">Rule ' + (i+1) + '</div><div class="rule-desc"><div>' + def.desc + '</div></div>'
+      + (def.captcha ? '<div><img class="captcha-img" src="/captchas/'+captchaCode+'.png"><button class="captcha-refresh">↻</button></div>' : '')
+      + (def.final ? '<div class="final-password"><button>I\'m done — confirm</button></div>' : '');
+    container.appendChild(el);
+    ruleEls[i] = el;
+    if (def.captcha) {
+      el.querySelector('.captcha-refresh').addEventListener('click', () => {
+        rerollCaptcha();
+        el.querySelector('.captcha-img').src = '/captchas/'+captchaCode+'.png';
+      });
+    }
+    if (def.final) {
+      el.querySelector('.final-password button').addEventListener('click', () => {
+        if (document.querySelector('.retype-box')) return;
+        const box = document.createElement('div');
+        box.className = 'password-box retype-box';
+        box.innerHTML = '<div class="ProseMirror" contenteditable="true"><p></p></div>';
+        el.appendChild(box);
+        const rb = box.querySelector('.ProseMirror');
+        // Compare against the *current* first-box content, like the real game.
+        const check = () => { finalDone = (rb.textContent.length > 0 && rb.textContent === editor.textContent); };
+        new MutationObserver(check).observe(rb, { childList: true, subtree: true, characterData: true });
+        rb.addEventListener('input', check);
+      });
+    }
+  }
+  buildRule(0);
+
+  function evaluate() {
+    lenEl.textContent = String(pw().length);
+    let allPass = true;
+    for (let i = 0; i < unlocked; i++) {
+      const ok = RULES[i].test();
+      ruleEls[i].classList.toggle('rule-error', !ok);
+      ruleEls[i].classList.toggle('rule-success', ok);
+      if (!ok) allPass = false;
+    }
+    if (allPass && unlocked < RULES.length) { unlocked++; buildRule(unlocked-1); }
+    else if (allPass && unlocked === RULES.length) { winScreen.classList.add('show'); window.__WON__ = true; }
+    window.__STATE__ = { unlocked, allPass, won: !!window.__WON__, len: pw().length };
+  }
+
+  // ProseMirror-like: the game re-validates whenever the editor DOM mutates.
+  new MutationObserver(evaluate).observe(editor, { childList: true, subtree: true, characterData: true });
+  editor.addEventListener('input', evaluate);
+  setInterval(evaluate, 200); // also polls, like the real reactive app
+  evaluate();
+})();
+</script>
+</body></html>
